@@ -1,3 +1,7 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
 const TOOLS = [
   {
     id: "cursor",
@@ -49,7 +53,73 @@ const USE_CASES = [
   "Mixed",
 ];
 
+const STORAGE_KEY = "signalspend.form";
+
+type ToolEntry = {
+  plan: string;
+  monthlySpend: string;
+  seats: string;
+};
+
+type FormState = {
+  teamSize: string;
+  useCase: string;
+  tools: Record<string, ToolEntry>;
+};
+
 export default function Home() {
+  const emptyTools = useMemo(() => {
+    return TOOLS.reduce<Record<string, ToolEntry>>((acc, tool) => {
+      acc[tool.id] = { plan: "", monthlySpend: "", seats: "" };
+      return acc;
+    }, {});
+  }, []);
+
+  const [formState, setFormState] = useState<FormState>({
+    teamSize: "",
+    useCase: "",
+    tools: emptyTools,
+  });
+
+  useEffect(() => {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(stored) as FormState;
+      setFormState({
+        teamSize: parsed.teamSize ?? "",
+        useCase: parsed.useCase ?? "",
+        tools: { ...emptyTools, ...(parsed.tools ?? {}) },
+      });
+    } catch (error) {
+      console.warn("Failed to load saved audit data.", error);
+    }
+  }, [emptyTools]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(formState));
+  }, [formState]);
+
+  const updateTool = (
+    toolId: string,
+    field: keyof ToolEntry,
+    value: string
+  ) => {
+    setFormState((prev) => ({
+      ...prev,
+      tools: {
+        ...prev.tools,
+        [toolId]: {
+          ...prev.tools[toolId],
+          [field]: value,
+        },
+      },
+    }));
+  };
+
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#fff2e6,_transparent_45%),radial-gradient(circle_at_15%_30%,_#d7f4ee,_transparent_42%),linear-gradient(180deg,_#f7f3ef,_#f1ebe6_60%,_#ede6df)] px-6 pb-20 pt-10 text-[color:var(--foreground)]">
       <main className="mx-auto flex w-full max-w-6xl flex-col gap-12">
@@ -120,11 +190,27 @@ export default function Home() {
                   min={1}
                   placeholder="12"
                   className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3"
+                  value={formState.teamSize}
+                  onChange={(event) =>
+                    setFormState((prev) => ({
+                      ...prev,
+                      teamSize: event.target.value,
+                    }))
+                  }
                 />
               </label>
               <label className="space-y-2 text-sm md:col-span-2">
                 <span className="font-semibold">Primary use case</span>
-                <select className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3">
+                <select
+                  className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3"
+                  value={formState.useCase}
+                  onChange={(event) =>
+                    setFormState((prev) => ({
+                      ...prev,
+                      useCase: event.target.value,
+                    }))
+                  }
+                >
                   <option value="">Select a use case</option>
                   {USE_CASES.map((item) => (
                     <option key={item} value={item.toLowerCase()}>
@@ -146,7 +232,13 @@ export default function Home() {
                   </div>
                   <label className="space-y-2 text-sm">
                     <span className="text-[color:var(--muted)]">Plan</span>
-                    <select className="w-full rounded-xl border border-black/10 bg-white px-3 py-2">
+                    <select
+                      className="w-full rounded-xl border border-black/10 bg-white px-3 py-2"
+                      value={formState.tools[tool.id]?.plan ?? ""}
+                      onChange={(event) =>
+                        updateTool(tool.id, "plan", event.target.value)
+                      }
+                    >
                       <option value="">Select plan</option>
                       {tool.plans.map((plan) => (
                         <option key={plan} value={plan}>
@@ -165,6 +257,10 @@ export default function Home() {
                       step="1"
                       placeholder="$0"
                       className="w-full rounded-xl border border-black/10 bg-white px-3 py-2"
+                      value={formState.tools[tool.id]?.monthlySpend ?? ""}
+                      onChange={(event) =>
+                        updateTool(tool.id, "monthlySpend", event.target.value)
+                      }
                     />
                   </label>
                   <label className="space-y-2 text-sm">
@@ -175,6 +271,10 @@ export default function Home() {
                       step="1"
                       placeholder="0"
                       className="w-full rounded-xl border border-black/10 bg-white px-3 py-2"
+                      value={formState.tools[tool.id]?.seats ?? ""}
+                      onChange={(event) =>
+                        updateTool(tool.id, "seats", event.target.value)
+                      }
                     />
                   </label>
                 </div>
