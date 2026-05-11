@@ -21,6 +21,7 @@ type AuditLine = {
   recommendedPlan: string | null;
   recommendedMonthlyUsd: number | null;
   savingsMonthlyUsd: number | null;
+  confidence: "high" | "medium" | "low";
   reason: string;
 };
 
@@ -29,12 +30,21 @@ type AuditSummary = {
   totalAnnualUsd: number;
   totalSavingsMonthlyUsd: number;
   totalSavingsAnnualUsd: number;
+  savingsPctOfSpend: number;
+  overlapSavingsMonthlyUsd: number;
   credexRecommended: boolean;
+  credexReason: string;
 };
 
 type AuditResult = {
   summary: AuditSummary;
   lines: AuditLine[];
+  overlaps: string[];
+  benchmarks: {
+    spendPerDeveloperMonthlyUsd: number | null;
+    typicalRangeMonthlyUsd: { low: number; high: number } | null;
+    note: string;
+  };
 };
 
 type UseCase = "coding" | "writing" | "data" | "research" | "mixed" | "";
@@ -121,6 +131,35 @@ const CATEGORY_ALTERNATIVES: Record<UseCase, string[]> = {
   "": [],
 };
 
+const OVERLAP_RULES = [
+  {
+    label: "Cursor + GitHub Copilot",
+    toolIds: ["cursor", "github-copilot"],
+    reason:
+      "Two coding assistants overlap on completions and chat. Standardize on one to avoid double-paying for the same workflow.",
+  },
+  {
+    label: "Claude Team + ChatGPT Team",
+    toolIds: ["claude", "chatgpt"],
+    reason:
+      "Both team chat suites cover similar writing and research workloads. Consolidating seats typically trims spend without reducing capability.",
+  },
+  {
+    label: "Multiple premium coding assistants",
+    toolIds: ["cursor", "github-copilot", "windsurf"],
+    reason:
+      "Multiple premium coding copilots are usually redundant. Pick the one with the best adoption and drop the rest.",
+  },
+];
+
+const BENCHMARKS_BY_TEAM_SIZE = [
+  { max: 5, low: 15, high: 60 },
+  { max: 20, low: 25, high: 90 },
+  { max: 50, low: 35, high: 120 },
+  { max: 200, low: 50, high: 160 },
+  { max: 1000, low: 60, high: 200 },
+];
+
 const parseNumber = (value?: string) => {
   if (!value) {
     return null;
@@ -192,7 +231,8 @@ const isTeamPlan = (plan: PricingPlan) =>
 const isEnterprisePlan = (plan: PricingPlan) =>
   /(enterprise|custom)/i.test(plan.label);
 
-const isApiPlan = (plan: PricingPlan) => /api/i.test(plan.label);
+const isApiPlan = (plan: PricingPlan) =>
+  plan.pricingModel === "usage" || /api/i.test(plan.label);
 
 const buildCandidates = (toolId: string, seats: number) => {
   const toolPricing = getToolPricing(toolId);
@@ -306,9 +346,56 @@ const findAlternativePlan = (
   return best;
 };
 
+const detectOverlaps = (tools: ToolEntryInput[]) => {
+  const activeToolIds = new Set(
+    tools.filter((tool) => tool.plan).map((tool) => tool.toolId)
+  );
+
+  return OVERLAP_RULES.filter((rule) =>
+    rule.toolIds.every((toolId) => activeToolIds.has(toolId))
+  );
+};
+
+const getBenchmarkRange = (teamSize: number | null) => {
+  if (!teamSize || teamSize <= 0) {
+    return null;
+  }
+
+  return (
+    BENCHMARKS_BY_TEAM_SIZE.find((range) => teamSize <= range.max) ??
+    BENCHMARKS_BY_TEAM_SIZE[BENCHMARKS_BY_TEAM_SIZE.length - 1]
+  );
+};
+
+const buildApiSpendGuidance = (toolName: string) => {
+  return `Usage-based pricing for ${toolName} is hard to optimize without monthly token volumes. Add input/output tokens so we can compare cost per 1M tokens and flag cheaper providers.`;
+};
+
+const confidenceForLine = (args: {
+  hasExactPricing: boolean;
+  usesMonthlySpend: boolean;
+  recommendationType: "same-plan" | "cheaper-plan" | "alternative" | "overlap";
+}) => {
+  if (args.recommendationType === "overlap") {
+    return "medium";
+  }
+
+  if (args.hasExactPricing && args.recommendationType === "cheaper-plan") {
+    return "high";
+  }
+
+  if (args.usesMonthlySpend) {
+    return "medium";
+  }
+
+  return "low";
+};
+
 export const calculateAudit = (input: AuditInput): AuditResult => {
   const lines: AuditLine[] = [];
   const useCase = (input.useCase ?? "") as UseCase;
+  const teamSize = parseNumber(input.teamSize) ?? null;
+  const overlaps = detectOverlaps(input.tools);
 
   input.tools.forEach((tool) => {
     if (!tool.plan && !tool.monthlySpend && !tool.seats) {
@@ -350,6 +437,11 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
           currentMonthlyUsd !== null && cheaper.monthly !== null
             ? currentMonthlyUsd - cheaper.monthly
             : null,
+        confidence: confidenceForLine({
+          hasExactPricing: cheaper.monthly !== null,
+          usesMonthlySpend: monthlySpend !== null,
+          recommendationType: "cheaper-plan",
+        }),
         reason: reasonParts.join(" ") ||
           `${cheaper.plan.label} is cheaper for your seat count at ${formatUsd(
             cheaper.monthly
@@ -369,6 +461,11 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
           recommendedPlan: plan.label,
           recommendedMonthlyUsd: currentMonthlyUsd,
           savingsMonthlyUsd: delta,
+          confidence: confidenceForLine({
+            hasExactPricing: true,
+            usesMonthlySpend: true,
+            recommendationType: "same-plan",
+          }),
           reason: `Your billed spend is about ${formatUsd(
             delta
           )}/mo above the list price for ${plan.label}.`,
@@ -396,6 +493,11 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
           currentMonthlyUsd !== null && alternative.monthly !== null
             ? currentMonthlyUsd - alternative.monthly
             : null,
+        confidence: confidenceForLine({
+          hasExactPricing: alternative.monthly !== null,
+          usesMonthlySpend: monthlySpend !== null,
+          recommendationType: "alternative",
+        }),
         reason: `Comparable ${useCase || "general"} capability at a lower list price (${formatUsd(
           alternative.monthly
         )}/mo).`,
@@ -412,8 +514,9 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
         recommendedPlan: null,
         recommendedMonthlyUsd: null,
         savingsMonthlyUsd: 0,
+        confidence: "low",
         reason:
-          "API spend is usage-based. Add token volume to compare providers or to estimate savings.",
+          buildApiSpendGuidance(toolPricing.toolName),
       });
       return;
     }
@@ -426,7 +529,30 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
       recommendedPlan: null,
       recommendedMonthlyUsd: null,
       savingsMonthlyUsd: 0,
+      confidence: confidenceForLine({
+        hasExactPricing: currentMonthlyUsd !== null,
+        usesMonthlySpend: monthlySpend !== null,
+        recommendationType: "same-plan",
+      }),
       reason: "Current plan appears aligned with your team size.",
+    });
+  });
+
+  overlaps.forEach((overlap) => {
+    lines.push({
+      toolId: "overlap",
+      toolName: "Overlap",
+      currentPlan: overlap.label,
+      currentMonthlyUsd: null,
+      recommendedPlan: "Consolidate",
+      recommendedMonthlyUsd: null,
+      savingsMonthlyUsd: null,
+      confidence: confidenceForLine({
+        hasExactPricing: false,
+        usesMonthlySpend: false,
+        recommendationType: "overlap",
+      }),
+      reason: overlap.reason,
     });
   });
 
@@ -438,6 +564,29 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
     (sum, line) => sum + (line.savingsMonthlyUsd ?? 0),
     0
   );
+  const overlapSavingsMonthlyUsd = overlaps.length > 0
+    ? Math.min(150, totalMonthlyUsd * 0.05)
+    : 0;
+  const savingsPctOfSpend = totalMonthlyUsd > 0
+    ? totalSavingsMonthlyUsd / totalMonthlyUsd
+    : 0;
+
+  const benchmarkRange = getBenchmarkRange(teamSize);
+  const spendPerDeveloperMonthlyUsd =
+    teamSize && teamSize > 0 ? totalMonthlyUsd / teamSize : null;
+  const benchmarkNote = benchmarkRange
+    ? `Typical AI spend for teams your size sits between ${formatUsd(
+        benchmarkRange.low
+      )} and ${formatUsd(benchmarkRange.high)} per developer per month.`
+    : "Add team size to benchmark your AI spend per developer.";
+
+  const credexRecommended =
+    totalSavingsMonthlyUsd >= 500 ||
+    overlapSavingsMonthlyUsd >= 100 ||
+    (totalMonthlyUsd >= 1000 && savingsPctOfSpend >= 0.2);
+  const credexReason = credexRecommended
+    ? "Savings are material enough to justify a Credex credit quote and procurement review."
+    : "Savings are modest. Keep monitoring, and we will notify you when pricing changes unlock more value.";
 
   return {
     summary: {
@@ -445,8 +594,19 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
       totalAnnualUsd: totalMonthlyUsd * 12,
       totalSavingsMonthlyUsd,
       totalSavingsAnnualUsd: totalSavingsMonthlyUsd * 12,
-      credexRecommended: totalSavingsMonthlyUsd >= 500,
+      savingsPctOfSpend,
+      overlapSavingsMonthlyUsd,
+      credexRecommended,
+      credexReason,
     },
     lines,
+    overlaps: overlaps.map((overlap) => overlap.reason),
+    benchmarks: {
+      spendPerDeveloperMonthlyUsd,
+      typicalRangeMonthlyUsd: benchmarkRange
+        ? { low: benchmarkRange.low, high: benchmarkRange.high }
+        : null,
+      note: benchmarkNote,
+    },
   };
 };
