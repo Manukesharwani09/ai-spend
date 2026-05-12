@@ -160,6 +160,14 @@ const OVERLAP_RULES = [
       "Two coding assistants overlap on completions and chat. Standardize on one to avoid double-paying for the same workflow.",
   },
   {
+    label: "Cursor + Windsurf",
+    toolIds: ["cursor", "windsurf"],
+    severity: 3,
+    category: "coding",
+    reason:
+      "Multiple premium coding assistants may duplicate core completion and chat workflows across the same engineering team.",
+  },
+  {
     label: "Claude Team + ChatGPT Team",
     toolIds: ["claude", "chatgpt"],
     severity: 2,
@@ -445,7 +453,9 @@ const findAlternativePlan = (
   }
 
   const savings = currentMonthlyUsd - best.monthly;
-  if (savings < 20 || savings / currentMonthlyUsd < 0.15) {
+  const minSavings = useCase === "mixed" ? 40 : 20;
+  const minPct = useCase === "mixed" ? 0.25 : 0.15;
+  if (savings < minSavings || savings / currentMonthlyUsd < minPct) {
     return null;
   }
 
@@ -460,6 +470,36 @@ const detectOverlaps = (tools: ToolEntryInput[]) => {
   return OVERLAP_RULES.filter((rule) =>
     rule.toolIds.every((toolId) => activeToolIds.has(toolId))
   );
+};
+
+const groupOverlaps = (overlaps: typeof OVERLAP_RULES) => {
+  const hasCoding = overlaps.some((overlap) => overlap.category === "coding");
+  const hasWriting = overlaps.some((overlap) => overlap.category === "writing");
+  const grouped: typeof OVERLAP_RULES = [];
+
+  if (hasCoding) {
+    grouped.push({
+      label: "Multiple premium coding assistants",
+      toolIds: [],
+      severity: 3,
+      category: "coding",
+      reason:
+        "Multiple premium coding assistants may duplicate completion and chat workflows across the same engineering team.",
+    });
+  }
+
+  if (hasWriting) {
+    grouped.push({
+      label: "Overlapping chat suites",
+      toolIds: [],
+      severity: 2,
+      category: "writing",
+      reason:
+        "Multiple team chat suites can overlap for writing and research workflows. Consolidate seats where adoption is lowest.",
+    });
+  }
+
+  return grouped.length > 0 ? grouped : overlaps;
 };
 
 const estimateOverlapSavings = (
@@ -567,7 +607,12 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
   const teamSize = parseNumber(input.teamSize) ?? null;
   const teamMaturity = getTeamMaturity(teamSize);
   const overlaps = detectOverlaps(input.tools);
+  const groupedOverlaps = groupOverlaps(overlaps);
   const toolMonthlySpend: Record<string, number | null> = {};
+  const chatSeatTools = new Set(["claude", "chatgpt"]);
+  const hasChatSeats = input.tools.some(
+    (tool) => tool.plan && chatSeatTools.has(tool.toolId)
+  );
 
   input.tools.forEach((tool) => {
     if (!tool.plan && !tool.monthlySpend && !tool.seats) {
@@ -646,6 +691,27 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
         });
         return;
       }
+    }
+
+    if (
+      plan.pricingModel === "free" &&
+      (teamSize !== null && teamSize >= 8 ||
+        seats >= 5 ||
+        usageIntensity === "heavy")
+    ) {
+      lines.push({
+        toolId: tool.toolId,
+        toolName: toolPricing.toolName,
+        currentPlan: plan.label,
+        currentMonthlyUsd,
+        recommendedPlan: null,
+        recommendedMonthlyUsd: null,
+        savingsMonthlyUsd: 0,
+        confidence: "medium",
+        reason:
+          "Free-tier tooling may introduce usage-limit and reliability constraints for collaborative workflows at this scale.",
+      });
+      return;
     }
 
     const comparable = decision === "not-recommended"
@@ -737,6 +803,22 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
         });
         return;
       }
+
+      if (delta < -Math.max(10, listMonthlyUsd * 0.35)) {
+        lines.push({
+          toolId: tool.toolId,
+          toolName: toolPricing.toolName,
+          currentPlan: plan.label,
+          currentMonthlyUsd,
+          recommendedPlan: plan.label,
+          recommendedMonthlyUsd: listMonthlyUsd,
+          savingsMonthlyUsd: null,
+          confidence: "low",
+          reason:
+            "Reported spend appears materially below standard pricing for this configuration.",
+        });
+        return;
+      }
     }
 
     const alternative = findAlternativePlan(
@@ -813,11 +895,11 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
         recommendationType: "same-plan",
       }),
       reason:
-        "Current plan appears aligned with your team size and required feature set.",
+        "Your current configuration appears operationally appropriate for your team size and workflow profile.",
     });
   });
 
-  overlaps.forEach((overlap) => {
+  groupedOverlaps.forEach((overlap) => {
     lines.push({
       toolId: "overlap",
       toolName: "Overlap",
@@ -843,8 +925,8 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
     (sum, line) => sum + (line.savingsMonthlyUsd ?? 0),
     0
   );
-  const overlapSavingsMonthlyUsd = overlaps.length > 0
-    ? estimateOverlapSavings(overlaps, toolMonthlySpend)
+  const overlapSavingsMonthlyUsd = groupedOverlaps.length > 0
+    ? estimateOverlapSavings(groupedOverlaps, toolMonthlySpend)
     : 0;
   const savingsPctOfSpend = totalMonthlyUsd > 0
     ? totalSavingsMonthlyUsd / totalMonthlyUsd
@@ -882,13 +964,53 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
   if (totalMonthlyUsd >= 2000) credexScore += 2;
   if (teamSize !== null && teamSize >= 50) credexScore += 2;
   if (hasUsageApi) credexScore += 2;
-  if (totalApiSpend >= 1000) credexScore += 2;
+  if (totalApiSpend >= 800) credexScore += 3;
+  else if (totalApiSpend >= 500) credexScore += 2;
   if (premiumCount >= 2) credexScore += 1;
 
-  const credexRecommended = credexScore >= 5;
+  const credexRecommended =
+    credexScore >= 5 || (hasUsageApi && totalApiSpend >= 500);
   const credexReason = credexRecommended
     ? "Savings are material enough to justify a Credex credit quote and procurement review."
     : "Savings are modest. Keep monitoring, and we will notify you when pricing changes unlock more value.";
+
+  if (hasUsageApi && hasChatSeats && totalApiSpend >= 500) {
+    lines.push({
+      toolId: "insight",
+      toolName: "Insight",
+      currentPlan: "API + seats",
+      currentMonthlyUsd: null,
+      recommendedPlan: null,
+      recommendedMonthlyUsd: null,
+      savingsMonthlyUsd: null,
+      confidence: "medium",
+      reason:
+        "Your organization maintains both premium conversational AI seats and substantial API usage. Review whether all conversational workflows require separate seat licensing.",
+    });
+  }
+
+  if (teamSize !== null && teamSize >= 5) {
+    const hasTeamBilling = input.tools.some((tool) => {
+      const plan = tool.plan ? resolvePlan(tool.toolId, tool.plan) : null;
+      if (!plan) return false;
+      return getTierForLabel(plan.label) === 2;
+    });
+
+    if (hasTeamBilling) {
+      lines.push({
+        toolId: "insight",
+        toolName: "Insight",
+        currentPlan: "Annual billing",
+        currentMonthlyUsd: null,
+        recommendedPlan: null,
+        recommendedMonthlyUsd: null,
+        savingsMonthlyUsd: null,
+        confidence: "low",
+        reason:
+          "Annual billing may reduce effective per-seat pricing without operational changes.",
+      });
+    }
+  }
 
   return {
     summary: {
