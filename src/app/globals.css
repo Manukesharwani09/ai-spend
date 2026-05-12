@@ -20,3 +20,28 @@ body {
   color: var(--foreground);
   font-family: var(--font-body), sans-serif;
 }
+
+@media print {
+  body {
+    background: #ffffff;
+  }
+
+  .print-hidden {
+    display: none !important;
+  }
+
+  .print-page {
+    background: #ffffff !important;
+    padding: 0.5in !important;
+  }
+
+  .print-card {
+    box-shadow: none !important;
+    background: #ffffff !important;
+  }
+
+  .print-section {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

@@ -2,9 +2,11 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { calculateAudit } from "../../../lib/audit";
 import { decodeSharePayload } from "../../../lib/share";
+import ReportActions from "./ReportActions";
 
 type PageProps = {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
 const formatUsd = (value: number | null) => {
@@ -69,6 +71,10 @@ export async function generateMetadata(
 
 export default async function ReportPage(props: PageProps) {
   const { id } = await props.params;
+  const searchParams = props.searchParams
+    ? await props.searchParams
+    : {};
+  const shouldPrint = searchParams.print === "1";
 
   let audit;
   try {
@@ -79,9 +85,9 @@ export default async function ReportPage(props: PageProps) {
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#fff2e6,_transparent_45%),radial-gradient(circle_at_15%_30%,_#d7f4ee,_transparent_42%),linear-gradient(180deg,_#f7f3ef,_#f1ebe6_60%,_#ede6df)] px-6 pb-20 pt-10 text-[color:var(--foreground)]">
+    <div className="print-page min-h-screen bg-[radial-gradient(circle_at_top,_#fff2e6,_transparent_45%),radial-gradient(circle_at_15%_30%,_#d7f4ee,_transparent_42%),linear-gradient(180deg,_#f7f3ef,_#f1ebe6_60%,_#ede6df)] px-6 pb-20 pt-10 text-[color:var(--foreground)]">
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-8">
-        <header className="flex flex-wrap items-center justify-between gap-4">
+        <header className="flex flex-wrap items-center justify-between gap-4 print-hidden">
           <div className="flex items-center gap-3">
             <span className="rounded-full bg-[color:var(--accent-strong)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-white">
               Credex
@@ -95,7 +101,7 @@ export default async function ReportPage(props: PageProps) {
           </div>
         </header>
 
-        <section className="rounded-[32px] border border-black/10 bg-white/90 p-8 shadow-[0_30px_80px_rgba(29,26,23,0.08)]">
+        <section className="print-card print-section rounded-[32px] border border-black/10 bg-white/90 p-8 shadow-[0_30px_80px_rgba(29,26,23,0.08)]">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h1 className="font-[var(--font-display)] text-3xl font-semibold">
@@ -105,10 +111,13 @@ export default async function ReportPage(props: PageProps) {
                 Snapshot of the current AI spend configuration.
               </p>
             </div>
-            <div className="rounded-full bg-[color:var(--accent-strong)]/10 px-4 py-2 text-sm text-[color:var(--accent-strong)]">
-              {audit.summary.credexRecommended
-                ? "Credex-ready savings detected"
-                : "Credex review not required yet"}
+            <div className="flex flex-wrap items-center gap-3 print-hidden">
+              <div className="rounded-full bg-[color:var(--accent-strong)]/10 px-4 py-2 text-sm text-[color:var(--accent-strong)]">
+                {audit.summary.credexRecommended
+                  ? "Credex-ready savings detected"
+                  : "Credex review not required yet"}
+              </div>
+              <ReportActions autoPrint={shouldPrint} />
             </div>
           </div>
 
@@ -149,7 +158,7 @@ export default async function ReportPage(props: PageProps) {
           ].map((block) => (
             <div
               key={block.title}
-              className="rounded-2xl border border-black/10 bg-white/90 p-5 shadow-[0_20px_40px_rgba(29,26,23,0.08)]"
+              className="print-card print-section rounded-2xl border border-black/10 bg-white/90 p-5 shadow-[0_20px_40px_rgba(29,26,23,0.08)]"
             >
               <div className="text-sm font-semibold">{block.title}</div>
               {block.items.length === 0 ? (

@@ -92,6 +92,7 @@ export default function Home() {
   > | null>(null);
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [shareMessage, setShareMessage] = useState<string | null>(null);
+  const [shareToastVisible, setShareToastVisible] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -254,9 +255,45 @@ export default function Home() {
 
     try {
       await navigator.clipboard.writeText(url);
-      setShareMessage("Share link copied.");
+      setShareMessage("Audit link copied");
+      setShareToastVisible(true);
     } catch {
       setShareMessage(url);
+      setShareToastVisible(true);
+    }
+
+    window.setTimeout(() => {
+      setShareToastVisible(false);
+    }, 2500);
+  };
+
+  const exportPdf = () => {
+    if (!auditResult) {
+      return;
+    }
+
+    const payload = {
+      teamSize: formState.teamSize || undefined,
+      useCase: formState.useCase || undefined,
+      usageIntensity: formState.usageIntensity,
+      optimizationMode: formState.optimizationMode,
+      tools: TOOLS.map((tool) => ({
+        toolId: tool.id,
+        plan: formState.tools[tool.id]?.plan ?? "",
+        monthlySpend: formState.tools[tool.id]?.monthlySpend ?? "",
+        seats: formState.tools[tool.id]?.seats ?? "",
+      })).filter((tool) => tool.plan || tool.monthlySpend || tool.seats),
+    };
+
+    const id = encodeSharePayload(payload);
+    const url = `${window.location.origin}/report/${id}?print=1`;
+    const opened = window.open(url, "_blank", "noopener,noreferrer");
+    if (!opened) {
+      setShareMessage("Pop-up blocked. Use Share audit to copy the link.");
+      setShareToastVisible(true);
+      window.setTimeout(() => {
+        setShareToastVisible(false);
+      }, 2500);
     }
   };
 
@@ -498,6 +535,11 @@ export default function Home() {
               <p className="mt-2 text-sm text-[color:var(--muted)]">
                 Generated after you submit your inputs.
               </p>
+              {auditResult && (
+                <p className="mt-1 text-xs text-[color:var(--muted)]">
+                  Anyone with the link can view this audit.
+                </p>
+              )}
             </div>
             {auditResult && (
               <div className="flex flex-wrap items-center gap-3">
@@ -506,19 +548,30 @@ export default function Home() {
                     ? "Credex-ready savings detected"
                     : "Credex review not required yet"}
                 </div>
-                <button
-                  type="button"
-                  onClick={shareReport}
-                  className="rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[color:var(--foreground)]"
-                >
-                  Copy share link
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={shareReport}
+                    className="rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[color:var(--foreground)]"
+                  >
+                    Share audit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exportPdf}
+                    className="rounded-full border border-black/10 bg-white/70 px-4 py-2 text-sm font-semibold text-[color:var(--muted)]"
+                  >
+                    Export PDF
+                  </button>
+                </div>
               </div>
             )}
           </div>
-          {shareMessage && (
-            <div className="mt-4 rounded-2xl border border-black/5 bg-white/70 px-4 py-3 text-sm text-[color:var(--muted)]">
-              {shareMessage}
+          {shareMessage && shareToastVisible && (
+            <div className="pointer-events-none fixed bottom-6 right-6 z-50">
+              <div className="rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[color:var(--foreground)] shadow-[0_12px_30px_rgba(15,107,95,0.18)]">
+                {shareMessage}
+              </div>
             </div>
           )}
 
