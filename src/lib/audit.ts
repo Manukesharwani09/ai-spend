@@ -639,6 +639,20 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
   const hasChatSeats = input.tools.some(
     (tool) => tool.plan && chatSeatTools.has(tool.toolId)
   );
+  const activeTools = input.tools.filter((tool) => tool.plan);
+  const hasMultipleTools = activeTools.length >= 2;
+  const premiumSeatTools = activeTools.filter((tool) => {
+    const plan = tool.plan ? resolvePlan(tool.toolId, tool.plan) : null;
+    if (!plan) return false;
+    const tier = getTierForLabel(plan.label);
+    return tier >= 2 && !isApiPlan(plan);
+  });
+  const hasCodingPremium = premiumSeatTools.some((tool) =>
+    ["cursor", "github-copilot", "windsurf"].includes(tool.toolId)
+  );
+  const hasWritingPremium = premiumSeatTools.some((tool) =>
+    ["claude", "chatgpt", "gemini"].includes(tool.toolId)
+  );
 
   input.tools.forEach((tool) => {
     if (!tool.plan && !tool.monthlySpend && !tool.seats) {
@@ -673,6 +687,9 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
       usageIntensity,
       useCase,
     });
+    const allowAlternatives =
+      decision !== "not-recommended" &&
+      !(useCase === "mixed" && hasMultipleTools);
     toolMonthlySpend[tool.toolId] = currentMonthlyUsd;
 
     if (
@@ -853,14 +870,16 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
       }
     }
 
-    const alternative = findAlternativePlan(
-      tool.toolId,
-      useCase,
-      seats,
-      currentMonthlyUsd,
-      currentTier,
-      teamMaturity
-    );
+    const alternative = allowAlternatives
+      ? findAlternativePlan(
+        tool.toolId,
+        useCase,
+        seats,
+        currentMonthlyUsd,
+        currentTier,
+        teamMaturity
+      )
+      : null;
 
     if (alternative) {
       const savingsPct =
@@ -953,6 +972,26 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
       priority: 3,
     });
   });
+
+  if (
+    groupedOverlaps.length === 0 &&
+    premiumSeatTools.length >= 2 &&
+    (hasCodingPremium || hasWritingPremium)
+  ) {
+    overlapsList.push({
+      toolId: "overlap",
+      toolName: "Overlap",
+      currentPlan: "Multi-vendor premium stack",
+      currentMonthlyUsd: null,
+      recommendedPlan: "Review overlap",
+      recommendedMonthlyUsd: null,
+      savingsMonthlyUsd: null,
+      confidence: "medium",
+      reason:
+        "Your organization maintains multiple premium AI subscriptions. Review overlapping workflows before expanding the stack.",
+      priority: 3,
+    });
+  }
 
   const totalMonthlyUsd = Object.values(toolMonthlySpend).reduce(
     (sum, value) => sum + (value ?? 0),
