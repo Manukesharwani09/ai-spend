@@ -40,7 +40,7 @@ type AuditSummary = {
   credexReason: string;
 };
 
-type AuditResult = {
+export type AuditResult = {
   summary: AuditSummary;
   recommendations: AuditLine[];
   warnings: AuditLine[];

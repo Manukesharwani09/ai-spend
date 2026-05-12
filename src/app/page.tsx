@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { calculateAudit } from "../lib/audit";
+import AiSummary from "./_components/AiSummary";
+import LeadCaptureForm from "./_components/LeadCaptureForm";
 import { encodeSharePayload } from "../lib/share";
 
 const TOOLS = [
@@ -629,6 +631,21 @@ export default function Home() {
                     {auditResult.summary.credexReason}
                   </p>
                 </div>
+                <AiSummary
+                  audit={auditResult}
+                  input={{
+                    teamSize: formState.teamSize,
+                    useCase: formState.useCase,
+                    usageIntensity: formState.usageIntensity,
+                    optimizationMode: formState.optimizationMode,
+                    tools: TOOLS.map((tool) => ({
+                      toolId: tool.id,
+                      plan: formState.tools[tool.id]?.plan ?? "",
+                      monthlySpend: formState.tools[tool.id]?.monthlySpend ?? "",
+                      seats: formState.tools[tool.id]?.seats ?? "",
+                    })).filter((tool) => tool.plan || tool.monthlySpend || tool.seats),
+                  }}
+                />
               </div>
 
               <div className="space-y-4">
@@ -637,6 +654,8 @@ export default function Home() {
                 {renderLines("Overlap flags", auditResult.overlaps)}
                 {renderLines("Insights", auditResult.insights)}
               </div>
+              
+              <LeadCaptureForm auditResult={auditResult} />
             </div>
           )}
         </section>

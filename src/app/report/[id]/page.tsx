@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { calculateAudit } from "../../../lib/audit";
 import { decodeSharePayload } from "../../../lib/share";
 import ReportActions from "./ReportActions";
+import AiSummary from "../../_components/AiSummary";
 
 type PageProps = {
   params: Promise<{ id: string }>;
@@ -77,8 +78,9 @@ export default async function ReportPage(props: PageProps) {
   const shouldPrint = searchParams.print === "1";
 
   let audit;
+  let payload;
   try {
-    const payload = decodeSharePayload(id);
+    payload = decodeSharePayload(id);
     audit = calculateAudit(payload);
   } catch {
     notFound();
@@ -198,6 +200,8 @@ export default async function ReportPage(props: PageProps) {
             </div>
           ))}
         </section>
+
+        <AiSummary audit={audit} input={payload} />
       </main>
     </div>
   );
