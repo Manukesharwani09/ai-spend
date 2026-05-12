@@ -61,11 +61,10 @@ export default function LeadCaptureForm({ auditResult }: LeadCaptureFormProps) {
           </svg>
         </div>
         <h3 className="mt-4 font-[var(--font-display)] text-xl font-semibold text-[color:var(--foreground)]">
-          Audit sent to your inbox!
+          Your request has been received
         </h3>
         <p className="mt-2 text-sm text-[color:var(--muted)]">
-          We've sent a copy of your results to {email}.
-          {auditResult.summary.credexRecommended && " Our team will review your high-savings profile and reach out shortly."}
+          Credex will reach out for high-savings optimization opportunities where applicable.
         </p>
       </div>
     );
@@ -75,10 +74,10 @@ export default function LeadCaptureForm({ auditResult }: LeadCaptureFormProps) {
     <div className="mt-10 rounded-[32px] border border-black/10 bg-white p-8 shadow-[0_20px_60px_rgba(29,26,23,0.06)]">
       <div className="max-w-xl">
         <h3 className="font-[var(--font-display)] text-2xl font-semibold">
-          Save your audit & get a custom review
+          Want a deeper optimization review?
         </h3>
         <p className="mt-2 text-sm text-[color:var(--muted)]">
-          Get this report sent to your email. If you have significant savings potential, Credex will reach out with direct inventory deals.
+          Receive your instant AI audit summary immediately. For high-savings opportunities, submit your contact details and Credex may reach out with additional optimization recommendations.
         </p>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-5">
@@ -148,7 +147,7 @@ export default function LeadCaptureForm({ auditResult }: LeadCaptureFormProps) {
             disabled={status === "loading"}
             className="w-full rounded-full bg-[color:var(--accent-strong)] px-6 py-3.5 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,107,95,0.25)] transition-all hover:bg-[color:var(--accent-strong)]/90 disabled:opacity-70 sm:w-auto"
           >
-            {status === "loading" ? "Sending..." : "Send me this report"}
+            {status === "loading" ? "Sending..." : "Get Full Optimization Review"}
           </button>
         </form>
       </div>

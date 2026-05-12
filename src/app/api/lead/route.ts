@@ -11,16 +11,16 @@ const MAX_REQUESTS_PER_WINDOW = 5;
 function checkRateLimit(ip: string): boolean {
   const now = Date.now();
   const record = rateLimitMap.get(ip);
-  
+
   if (!record || now - record.lastReset > RATE_LIMIT_WINDOW_MS) {
     rateLimitMap.set(ip, { count: 1, lastReset: now });
     return true;
   }
-  
+
   if (record.count >= MAX_REQUESTS_PER_WINDOW) {
     return false;
   }
-  
+
   record.count++;
   return true;
 }
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
 
     if (supabaseUrl && supabaseKey) {
       const supabase = createClient(supabaseUrl, supabaseKey);
-      
+
       // Store in Supabase
       const { error: dbError } = await supabase
         .from('leads')
@@ -66,7 +66,7 @@ export async function POST(request: Request) {
             audit_data: auditData,
           }
         ]);
-        
+
       if (dbError) {
         console.error("Supabase insert error:", dbError);
         // Continue even if DB fails, maybe we can still send the email
@@ -78,24 +78,16 @@ export async function POST(request: Request) {
     // Send email via Resend
     if (resendKey) {
       const resend = new Resend(resendKey);
-      
-      const isHighSavings = auditData?.summary?.credexRecommended;
-      let emailText = `Hello,\n\nThanks for using SignalSpend to audit your AI tools!\n\n`;
-      emailText += `Your current total spend is $${auditData?.summary?.totalMonthlyUsd || 0}/mo. `;
-      emailText += `We identified potential savings of $${auditData?.summary?.totalSavingsMonthlyUsd || 0}/mo.\n\n`;
-      
-      if (isHighSavings) {
-        emailText += `Since you have significant potential savings, the Credex team will review your stack and reach out directly with custom inventory options.\n\n`;
-      } else {
-        emailText += `Review your full report online anytime to implement the recommended plan changes.\n\n`;
-      }
-      emailText += `Best,\nThe Credex Team`;
 
+      let emailText = `Thanks for submitting your audit request. Our system identified potential optimization opportunities. Credex will review your submission and reach out for high-savings cases where additional recommendations may provide value.`;
+
+      const htmlText = emailText.replace(/\n/g, '<br/>');
       const { error: emailError } = await resend.emails.send({
-        from: "Credex <hello@yourdomain.com>", // Replace with your verified Resend domain
-        to: email,
-        subject: "Your SignalSpend Audit Results",
+        from: "onboarding@resend.dev",
+        to: "mkesharwani125@gmail.com",
+        subject: "Your Credex Audit Request Was Received",
         text: emailText,
+        html: `<p>${htmlText}</p>`,
       });
 
       if (emailError) {
