@@ -150,6 +150,45 @@ export default function Home() {
     return `${Math.round(value * 100)}%`;
   };
 
+  const renderLines = (
+    title: string,
+    items: ReturnType<typeof calculateAudit>["recommendations"]
+  ) => {
+    if (items.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className="rounded-2xl border border-black/5 bg-white p-4">
+        <div className="text-sm font-semibold">{title}</div>
+        <div className="mt-3 space-y-4 text-sm text-[color:var(--muted)]">
+          {items.map((line, index) => (
+            <div
+              key={`${line.toolId}-${index}`}
+              className="rounded-xl border border-black/5 bg-[#faf7f4] p-3"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[color:var(--foreground)]">
+                <span className="font-semibold">{line.toolName}</span>
+                <span className="text-xs uppercase tracking-[0.2em] text-[color:var(--muted)]">
+                  {line.confidence} confidence
+                </span>
+              </div>
+              <div className="mt-2 text-xs text-[color:var(--muted)]">
+                Current: {line.currentPlan} · {formatUsd(line.currentMonthlyUsd)}/mo
+              </div>
+              <div className="mt-1 text-xs text-[color:var(--muted)]">
+                Recommended: {line.recommendedPlan ?? "No change"} · {formatUsd(line.recommendedMonthlyUsd)}/mo
+              </div>
+              <div className="mt-2 text-sm text-[color:var(--foreground)]">
+                {line.reason}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   const runAudit = () => {
     if (!hasInputs) {
       setHasSubmitted(true);
@@ -172,6 +211,19 @@ export default function Home() {
 
     setAuditResult(result);
     setHasSubmitted(true);
+  };
+
+  const resetForm = () => {
+    setFormState({
+      teamSize: "",
+      useCase: "",
+      usageIntensity: "moderate",
+      optimizationMode: "balanced",
+      tools: emptyTools,
+    });
+    setAuditResult(null);
+    setHasSubmitted(false);
+    localStorage.removeItem(STORAGE_KEY);
   };
 
   return (
@@ -389,6 +441,13 @@ export default function Home() {
               >
                 Generate audit report
               </button>
+              <button
+                type="button"
+                className="rounded-full border border-black/10 bg-white px-6 py-3 text-sm font-semibold text-[color:var(--foreground)]"
+                onClick={resetForm}
+              >
+                Reset form
+              </button>
               <span className="text-sm text-[color:var(--muted)]">
                 Report updates only when you submit.
               </span>
@@ -472,48 +531,10 @@ export default function Home() {
               </div>
 
               <div className="space-y-4">
-                <div className="rounded-2xl border border-black/5 bg-white p-4">
-                  <div className="text-sm font-semibold">Overlap flags</div>
-                  {auditResult.overlaps.length === 0 ? (
-                    <p className="mt-2 text-sm text-[color:var(--muted)]">
-                      No overlapping tools detected yet.
-                    </p>
-                  ) : (
-                    <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-[color:var(--muted)]">
-                      {auditResult.overlaps.map((overlap) => (
-                        <li key={overlap}>{overlap}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-
-                <div className="rounded-2xl border border-black/5 bg-white p-4">
-                  <div className="text-sm font-semibold">Recommendations</div>
-                  <div className="mt-3 space-y-4 text-sm text-[color:var(--muted)]">
-                    {auditResult.lines.map((line, index) => (
-                      <div
-                        key={`${line.toolId}-${index}`}
-                        className="rounded-xl border border-black/5 bg-[#faf7f4] p-3"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2 text-[color:var(--foreground)]">
-                          <span className="font-semibold">{line.toolName}</span>
-                          <span className="text-xs uppercase tracking-[0.2em] text-[color:var(--muted)]">
-                            {line.confidence} confidence
-                          </span>
-                        </div>
-                        <div className="mt-2 text-xs text-[color:var(--muted)]">
-                          Current: {line.currentPlan} · {formatUsd(line.currentMonthlyUsd)}/mo
-                        </div>
-                        <div className="mt-1 text-xs text-[color:var(--muted)]">
-                          Recommended: {line.recommendedPlan ?? "No change"} · {formatUsd(line.recommendedMonthlyUsd)}/mo
-                        </div>
-                        <div className="mt-2 text-sm text-[color:var(--foreground)]">
-                          {line.reason}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                {renderLines("Recommendations", auditResult.recommendations)}
+                {renderLines("Warnings", auditResult.warnings)}
+                {renderLines("Overlap flags", auditResult.overlaps)}
+                {renderLines("Insights", auditResult.insights)}
               </div>
             </div>
           )}
