@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { calculateAudit } from "../lib/audit";
+import { encodeSharePayload } from "../lib/share";
 
 const TOOLS = [
   {
@@ -90,6 +91,7 @@ export default function Home() {
     typeof calculateAudit
   > | null>(null);
   const [hasSubmitted, setHasSubmitted] = useState(false);
+  const [shareMessage, setShareMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -193,6 +195,7 @@ export default function Home() {
     if (!hasInputs) {
       setHasSubmitted(true);
       setAuditResult(null);
+      setShareMessage(null);
       return;
     }
 
@@ -211,6 +214,7 @@ export default function Home() {
 
     setAuditResult(result);
     setHasSubmitted(true);
+    setShareMessage(null);
   };
 
   const resetForm = () => {
@@ -223,7 +227,37 @@ export default function Home() {
     });
     setAuditResult(null);
     setHasSubmitted(false);
+    setShareMessage(null);
     localStorage.removeItem(STORAGE_KEY);
+  };
+
+  const shareReport = async () => {
+    if (!auditResult) {
+      return;
+    }
+
+    const payload = {
+      teamSize: formState.teamSize || undefined,
+      useCase: formState.useCase || undefined,
+      usageIntensity: formState.usageIntensity,
+      optimizationMode: formState.optimizationMode,
+      tools: TOOLS.map((tool) => ({
+        toolId: tool.id,
+        plan: formState.tools[tool.id]?.plan ?? "",
+        monthlySpend: formState.tools[tool.id]?.monthlySpend ?? "",
+        seats: formState.tools[tool.id]?.seats ?? "",
+      })).filter((tool) => tool.plan || tool.monthlySpend || tool.seats),
+    };
+
+    const id = encodeSharePayload(payload);
+    const url = `${window.location.origin}/report/${id}`;
+
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareMessage("Share link copied.");
+    } catch {
+      setShareMessage(url);
+    }
   };
 
   return (
@@ -466,13 +500,27 @@ export default function Home() {
               </p>
             </div>
             {auditResult && (
-              <div className="rounded-full bg-[color:var(--accent-strong)]/10 px-4 py-2 text-sm text-[color:var(--accent-strong)]">
-                {auditResult.summary.credexRecommended
-                  ? "Credex-ready savings detected"
-                  : "Credex review not required yet"}
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="rounded-full bg-[color:var(--accent-strong)]/10 px-4 py-2 text-sm text-[color:var(--accent-strong)]">
+                  {auditResult.summary.credexRecommended
+                    ? "Credex-ready savings detected"
+                    : "Credex review not required yet"}
+                </div>
+                <button
+                  type="button"
+                  onClick={shareReport}
+                  className="rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[color:var(--foreground)]"
+                >
+                  Copy share link
+                </button>
               </div>
             )}
           </div>
+          {shareMessage && (
+            <div className="mt-4 rounded-2xl border border-black/5 bg-white/70 px-4 py-3 text-sm text-[color:var(--muted)]">
+              {shareMessage}
+            </div>
+          )}
 
           {!hasSubmitted ? (
             <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/70 p-6 text-sm text-[color:var(--muted)]">

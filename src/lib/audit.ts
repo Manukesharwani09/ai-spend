@@ -7,7 +7,7 @@ type ToolEntryInput = {
   seats?: string;
 };
 
-type AuditInput = {
+export type AuditInput = {
   teamSize?: string;
   useCase?: string;
   usageIntensity?: "light" | "moderate" | "heavy";
