@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { calculateAudit } from "../lib/audit";
 
 const TOOLS = [
   {
@@ -9,7 +10,7 @@ const TOOLS = [
     plans: ["Hobby", "Pro", "Business", "Enterprise"],
   },
   {
-    id: "copilot",
+    id: "github-copilot",
     label: "GitHub Copilot",
     plans: ["Individual", "Business", "Enterprise"],
   },
@@ -64,6 +65,8 @@ type ToolEntry = {
 type FormState = {
   teamSize: string;
   useCase: string;
+  usageIntensity: "light" | "moderate" | "heavy";
+  optimizationMode: "conservative" | "balanced";
   tools: Record<string, ToolEntry>;
 };
 
@@ -78,8 +81,15 @@ export default function Home() {
   const [formState, setFormState] = useState<FormState>({
     teamSize: "",
     useCase: "",
+    usageIntensity: "moderate",
+    optimizationMode: "balanced",
     tools: emptyTools,
   });
+
+  const [auditResult, setAuditResult] = useState<ReturnType<
+    typeof calculateAudit
+  > | null>(null);
+  const [hasSubmitted, setHasSubmitted] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -92,6 +102,8 @@ export default function Home() {
       setFormState({
         teamSize: parsed.teamSize ?? "",
         useCase: parsed.useCase ?? "",
+        usageIntensity: parsed.usageIntensity ?? "moderate",
+        optimizationMode: parsed.optimizationMode ?? "balanced",
         tools: { ...emptyTools, ...(parsed.tools ?? {}) },
       });
     } catch (error) {
@@ -118,6 +130,48 @@ export default function Home() {
         },
       },
     }));
+  };
+
+  const hasInputs = useMemo(() => {
+    return Object.values(formState.tools).some(
+      (entry) => entry.plan || entry.monthlySpend || entry.seats
+    );
+  }, [formState.tools]);
+
+  const formatUsd = (value: number | null) => {
+    if (value === null) {
+      return "-";
+    }
+
+    return `$${value.toFixed(0)}`;
+  };
+
+  const formatPct = (value: number) => {
+    return `${Math.round(value * 100)}%`;
+  };
+
+  const runAudit = () => {
+    if (!hasInputs) {
+      setHasSubmitted(true);
+      setAuditResult(null);
+      return;
+    }
+
+    const result = calculateAudit({
+      teamSize: formState.teamSize,
+      useCase: formState.useCase,
+      usageIntensity: formState.usageIntensity,
+      optimizationMode: formState.optimizationMode,
+      tools: TOOLS.map((tool) => ({
+        toolId: tool.id,
+        plan: formState.tools[tool.id]?.plan ?? "",
+        monthlySpend: formState.tools[tool.id]?.monthlySpend ?? "",
+        seats: formState.tools[tool.id]?.seats ?? "",
+      })),
+    });
+
+    setAuditResult(result);
+    setHasSubmitted(true);
   };
 
   return (
@@ -181,7 +235,13 @@ export default function Home() {
             your work.
           </p>
 
-          <form className="mt-8 space-y-8">
+          <form
+            className="mt-8 space-y-8"
+            onSubmit={(event) => {
+              event.preventDefault();
+              runAudit();
+            }}
+          >
             <div className="grid gap-6 md:grid-cols-3">
               <label className="space-y-2 text-sm">
                 <span className="font-semibold">Team size</span>
@@ -217,6 +277,47 @@ export default function Home() {
                       {item}
                     </option>
                   ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="grid gap-6 md:grid-cols-2">
+              <label className="space-y-2 text-sm">
+                <span className="font-semibold">Usage intensity</span>
+                <select
+                  className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3"
+                  value={formState.usageIntensity}
+                  onChange={(event) =>
+                    setFormState((prev) => ({
+                      ...prev,
+                      usageIntensity: event.target.value as
+                        | "light"
+                        | "moderate"
+                        | "heavy",
+                    }))
+                  }
+                >
+                  <option value="light">Light</option>
+                  <option value="moderate">Moderate</option>
+                  <option value="heavy">Heavy</option>
+                </select>
+              </label>
+              <label className="space-y-2 text-sm">
+                <span className="font-semibold">Optimization mode</span>
+                <select
+                  className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3"
+                  value={formState.optimizationMode}
+                  onChange={(event) =>
+                    setFormState((prev) => ({
+                      ...prev,
+                      optimizationMode: event.target.value as
+                        | "conservative"
+                        | "balanced",
+                    }))
+                  }
+                >
+                  <option value="conservative">Conservative</option>
+                  <option value="balanced">Balanced</option>
                 </select>
               </label>
             </div>
@@ -280,7 +381,142 @@ export default function Home() {
                 </div>
               ))}
             </div>
+
+            <div className="flex flex-wrap items-center gap-4">
+              <button
+                type="submit"
+                className="rounded-full bg-[color:var(--accent)] px-6 py-3 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(255,106,61,0.2)]"
+              >
+                Generate audit report
+              </button>
+              <span className="text-sm text-[color:var(--muted)]">
+                Report updates only when you submit.
+              </span>
+            </div>
           </form>
+        </section>
+
+        <section className="rounded-[32px] border border-black/10 bg-white/90 p-8 shadow-[0_30px_80px_rgba(29,26,23,0.08)]">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h2 className="font-[var(--font-display)] text-2xl font-semibold">
+                Audit summary
+              </h2>
+              <p className="mt-2 text-sm text-[color:var(--muted)]">
+                Generated after you submit your inputs.
+              </p>
+            </div>
+            {auditResult && (
+              <div className="rounded-full bg-[color:var(--accent-strong)]/10 px-4 py-2 text-sm text-[color:var(--accent-strong)]">
+                {auditResult.summary.credexRecommended
+                  ? "Credex-ready savings detected"
+                  : "Credex review not required yet"}
+              </div>
+            )}
+          </div>
+
+          {!hasSubmitted ? (
+            <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/70 p-6 text-sm text-[color:var(--muted)]">
+              Fill out the form, then generate a report.
+            </div>
+          ) : !hasInputs || !auditResult ? (
+            <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/70 p-6 text-sm text-[color:var(--muted)]">
+              Add at least one tool to generate a savings summary.
+            </div>
+          ) : (
+            <div className="mt-6 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+              <div className="space-y-6">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-black/5 bg-[#faf7f4] p-4">
+                    <div className="text-xs uppercase tracking-[0.2em] text-[color:var(--muted)]">
+                      Current spend
+                    </div>
+                    <div className="mt-2 text-2xl font-semibold">
+                      {formatUsd(auditResult.summary.totalMonthlyUsd)}/mo
+                    </div>
+                    <div className="text-sm text-[color:var(--muted)]">
+                      {formatUsd(auditResult.summary.totalAnnualUsd)}/yr
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-black/5 bg-[#faf7f4] p-4">
+                    <div className="text-xs uppercase tracking-[0.2em] text-[color:var(--muted)]">
+                      Estimated savings
+                    </div>
+                    <div className="mt-2 text-2xl font-semibold text-[color:var(--accent-strong)]">
+                      {formatUsd(auditResult.summary.totalSavingsMonthlyUsd)}/mo
+                    </div>
+                    <div className="text-sm text-[color:var(--muted)]">
+                      {formatUsd(auditResult.summary.totalSavingsAnnualUsd)}/yr · {formatPct(auditResult.summary.savingsPctOfSpend)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-black/5 bg-white p-4">
+                  <div className="text-sm font-semibold">Benchmarks</div>
+                  <div className="mt-2 text-sm text-[color:var(--muted)]">
+                    {auditResult.benchmarks.note}
+                  </div>
+                  {auditResult.benchmarks.spendPerDeveloperMonthlyUsd !== null && (
+                    <div className="mt-3 text-sm">
+                      Spend per developer: {formatUsd(auditResult.benchmarks.spendPerDeveloperMonthlyUsd)}/mo
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-black/5 bg-white p-4 text-sm">
+                  <div className="font-semibold">Credex guidance</div>
+                  <p className="mt-2 text-[color:var(--muted)]">
+                    {auditResult.summary.credexReason}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-black/5 bg-white p-4">
+                  <div className="text-sm font-semibold">Overlap flags</div>
+                  {auditResult.overlaps.length === 0 ? (
+                    <p className="mt-2 text-sm text-[color:var(--muted)]">
+                      No overlapping tools detected yet.
+                    </p>
+                  ) : (
+                    <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-[color:var(--muted)]">
+                      {auditResult.overlaps.map((overlap) => (
+                        <li key={overlap}>{overlap}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-black/5 bg-white p-4">
+                  <div className="text-sm font-semibold">Recommendations</div>
+                  <div className="mt-3 space-y-4 text-sm text-[color:var(--muted)]">
+                    {auditResult.lines.map((line, index) => (
+                      <div
+                        key={`${line.toolId}-${index}`}
+                        className="rounded-xl border border-black/5 bg-[#faf7f4] p-3"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[color:var(--foreground)]">
+                          <span className="font-semibold">{line.toolName}</span>
+                          <span className="text-xs uppercase tracking-[0.2em] text-[color:var(--muted)]">
+                            {line.confidence} confidence
+                          </span>
+                        </div>
+                        <div className="mt-2 text-xs text-[color:var(--muted)]">
+                          Current: {line.currentPlan} · {formatUsd(line.currentMonthlyUsd)}/mo
+                        </div>
+                        <div className="mt-1 text-xs text-[color:var(--muted)]">
+                          Recommended: {line.recommendedPlan ?? "No change"} · {formatUsd(line.recommendedMonthlyUsd)}/mo
+                        </div>
+                        <div className="mt-2 text-sm text-[color:var(--foreground)]">
+                          {line.reason}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
       </main>
     </div>

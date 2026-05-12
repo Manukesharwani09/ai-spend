@@ -10,6 +10,8 @@ type ToolEntryInput = {
 type AuditInput = {
   teamSize?: string;
   useCase?: string;
+  usageIntensity?: "light" | "moderate" | "heavy";
+  optimizationMode?: "conservative" | "balanced";
   tools: ToolEntryInput[];
 };
 
@@ -48,13 +50,30 @@ type AuditResult = {
 };
 
 type UseCase = "coding" | "writing" | "data" | "research" | "mixed" | "";
+type TeamMaturity = "solo" | "early" | "growing" | "mature";
+type DowngradeDecision = "safe" | "aggressive" | "not-recommended";
 
 type CandidatePlan = {
   toolId: string;
   toolName: string;
   plan: PricingPlan;
   monthly: number | null;
+  tier: CapabilityTier;
 };
+
+type CapabilityTier = 0 | 1 | 2 | 3;
+
+type TierRule = {
+  tier: CapabilityTier;
+  labels: string[];
+};
+
+const CAPABILITY_TIERS: TierRule[] = [
+  { tier: 0, labels: ["free", "hobby"] },
+  { tier: 1, labels: ["pro", "plus", "individual"] },
+  { tier: 2, labels: ["team", "business", "teams"] },
+  { tier: 3, labels: ["enterprise", "custom"] },
+];
 
 const PLAN_LABEL_MAP: Record<string, Record<string, string>> = {
   cursor: {
@@ -135,18 +154,24 @@ const OVERLAP_RULES = [
   {
     label: "Cursor + GitHub Copilot",
     toolIds: ["cursor", "github-copilot"],
+    severity: 3,
+    category: "coding",
     reason:
       "Two coding assistants overlap on completions and chat. Standardize on one to avoid double-paying for the same workflow.",
   },
   {
     label: "Claude Team + ChatGPT Team",
     toolIds: ["claude", "chatgpt"],
+    severity: 2,
+    category: "writing",
     reason:
       "Both team chat suites cover similar writing and research workloads. Consolidating seats typically trims spend without reducing capability.",
   },
   {
     label: "Multiple premium coding assistants",
     toolIds: ["cursor", "github-copilot", "windsurf"],
+    severity: 2,
+    category: "coding",
     reason:
       "Multiple premium coding copilots are usually redundant. Pick the one with the best adoption and drop the rest.",
   },
@@ -195,14 +220,7 @@ const resolvePlan = (toolId: string, planLabel: string) => {
   return toolPricing?.plans.find((plan) => plan.id === planId) ?? null;
 };
 
-const estimatePlanCost = (
-  plan: PricingPlan,
-  seats: number,
-  monthlySpend: number | null
-) => {
-  if (monthlySpend !== null) {
-    return monthlySpend;
-  }
+const estimatePlanCost = (plan: PricingPlan, seats: number) => {
 
   const seatCount = Math.max(seats, 1);
 
@@ -225,6 +243,18 @@ const estimatePlanCost = (
   return null;
 };
 
+const estimateReportedOrList = (
+  plan: PricingPlan,
+  seats: number,
+  reportedSpend: number | null
+) => {
+  if (reportedSpend !== null) {
+    return reportedSpend;
+  }
+
+  return estimatePlanCost(plan, seats);
+};
+
 const isTeamPlan = (plan: PricingPlan) =>
   /(team|business|teams)/i.test(plan.label);
 
@@ -233,6 +263,69 @@ const isEnterprisePlan = (plan: PricingPlan) =>
 
 const isApiPlan = (plan: PricingPlan) =>
   plan.pricingModel === "usage" || /api/i.test(plan.label);
+
+const getTierForLabel = (label: string): CapabilityTier => {
+  const normalized = label.toLowerCase();
+  for (const rule of CAPABILITY_TIERS) {
+    if (rule.labels.some((token) => normalized.includes(token))) {
+      return rule.tier;
+    }
+  }
+
+  return 1;
+};
+
+const getTeamMaturity = (teamSize: number | null): TeamMaturity => {
+  if (!teamSize || teamSize <= 1) return "solo";
+  if (teamSize <= 4) return "early";
+  if (teamSize <= 12) return "growing";
+  return "mature";
+};
+
+const isLowRiskFreeTier = (args: {
+  seats: number;
+  teamSize: number | null;
+  usageIntensity: "light" | "moderate" | "heavy";
+  useCase: UseCase;
+}) => {
+  const { seats, teamSize, usageIntensity, useCase } = args;
+  if (seats !== 1) return false;
+  if (teamSize !== null && teamSize > 1) return false;
+  if (usageIntensity !== "light") return false;
+  if (useCase === "coding") return false;
+  return true;
+};
+
+const shouldKeepTeamPlan = (args: {
+  seats: number;
+  teamSize: number | null;
+  usageIntensity: "light" | "moderate" | "heavy";
+  useCase: UseCase;
+}) => {
+  const { seats, teamSize, usageIntensity, useCase } = args;
+  if (seats >= 10) return true;
+  if (seats >= 5) return true;
+  if (teamSize !== null && teamSize >= 8) return true;
+  if (usageIntensity === "heavy" && useCase === "coding") return true;
+  return false;
+};
+
+const downgradeDecision = (args: {
+  currentTier: CapabilityTier;
+  seats: number;
+  teamSize: number | null;
+  usageIntensity: "light" | "moderate" | "heavy";
+  useCase: UseCase;
+}) => {
+  const { currentTier, seats, teamSize, usageIntensity, useCase } = args;
+  if (currentTier < 2) return "safe" as DowngradeDecision;
+  if (shouldKeepTeamPlan({ seats, teamSize, usageIntensity, useCase })) {
+    return "not-recommended";
+  }
+  if (seats <= 2) return "safe";
+  if (seats <= 5 && usageIntensity !== "heavy") return "safe";
+  return "aggressive";
+};
 
 const buildCandidates = (toolId: string, seats: number) => {
   const toolPricing = getToolPricing(toolId);
@@ -247,24 +340,19 @@ const buildCandidates = (toolId: string, seats: number) => {
       toolId,
       toolName: toolPricing.toolName,
       plan,
-      monthly: estimatePlanCost(plan, seatCount, null),
+      monthly: estimatePlanCost(plan, seatCount),
+      tier: getTierForLabel(plan.label),
     }))
     .filter((candidate) => candidate.monthly !== null);
 };
 
-const findCheapestPlan = (toolId: string, seats: number) => {
-  const candidates = buildCandidates(toolId, seats);
-  if (candidates.length === 0) {
-    return null;
-  }
-
-  return candidates.sort((a, b) => (a.monthly ?? 0) - (b.monthly ?? 0))[0];
-};
-
-const findCheaperPlan = (
+const findComparablePlan = (
   toolId: string,
   seats: number,
-  currentMonthlyUsd: number | null
+  currentMonthlyUsd: number | null,
+  currentTier: CapabilityTier,
+  usageIntensity: "light" | "moderate" | "heavy",
+  allowFreeTier: boolean
 ) => {
   const toolPricing = getToolPricing(toolId);
   if (!toolPricing || currentMonthlyUsd === null) {
@@ -272,6 +360,11 @@ const findCheaperPlan = (
   }
 
   const seatCount = Math.max(seats, 1);
+  const minimumTier: CapabilityTier = currentTier === 3
+    ? 2
+    : currentTier === 0
+    ? 0
+    : ((currentTier - 1) as CapabilityTier);
   const candidates = toolPricing.plans.filter((plan) => {
     if (plan.pricingModel === "custom") {
       return false;
@@ -285,13 +378,23 @@ const findCheaperPlan = (
       return false;
     }
 
+    const tier = getTierForLabel(plan.label);
+    if (!allowFreeTier && tier === 0 && currentTier >= 1) {
+      return false;
+    }
+
+    if (tier < minimumTier) {
+      return false;
+    }
+
     return true;
   });
 
   const ranked = candidates
     .map((plan) => ({
       plan,
-      monthly: estimatePlanCost(plan, seatCount, null),
+      monthly: estimatePlanCost(plan, seatCount),
+      tier: getTierForLabel(plan.label),
     }))
     .filter((item) => item.monthly !== null)
     .sort((a, b) => (a.monthly ?? 0) - (b.monthly ?? 0));
@@ -312,7 +415,8 @@ const findAlternativePlan = (
   toolId: string,
   useCase: UseCase,
   seats: number,
-  currentMonthlyUsd: number | null
+  currentMonthlyUsd: number | null,
+  currentTier: CapabilityTier
 ) => {
   if (currentMonthlyUsd === null) {
     return null;
@@ -324,7 +428,9 @@ const findAlternativePlan = (
   const candidates = alternatives
     .filter((altId) => altId !== toolId)
     .flatMap((altId) => buildCandidates(altId, seats))
-    .filter((candidate) => !isApiPlan(candidate.plan));
+    .filter((candidate) =>
+      !isApiPlan(candidate.plan) && candidate.tier >= currentTier - 1
+    );
 
   if (candidates.length === 0) {
     return null;
@@ -356,6 +462,56 @@ const detectOverlaps = (tools: ToolEntryInput[]) => {
   );
 };
 
+const estimateOverlapSavings = (
+  overlaps: typeof OVERLAP_RULES,
+  toolMonthlySpend: Record<string, number | null>
+) => {
+  const overlapToolIds = new Set<string>();
+  overlaps.forEach((overlap) => {
+    overlap.toolIds.forEach((toolId) => overlapToolIds.add(toolId));
+  });
+
+  let overlapSpend = 0;
+  overlapToolIds.forEach((toolId) => {
+    overlapSpend += toolMonthlySpend[toolId] ?? 0;
+  });
+
+  const averageSeverity = overlaps.length
+    ? overlaps.reduce((sum, overlap) => sum + overlap.severity, 0) /
+      overlaps.length
+    : 0;
+  const severityMultiplier = averageSeverity >= 3 ? 0.55 : 0.4;
+
+  return Math.round(overlapSpend * severityMultiplier);
+};
+
+const findEnterpriseDowngrade = (
+  toolId: string,
+  seats: number
+) => {
+  const toolPricing = getToolPricing(toolId);
+  if (!toolPricing) {
+    return null;
+  }
+
+  const seatCount = Math.max(seats, 1);
+  const candidates = toolPricing.plans.filter((plan) => {
+    const tier = getTierForLabel(plan.label);
+    return tier === 2 && !isApiPlan(plan);
+  });
+
+  const ranked = candidates
+    .map((plan) => ({
+      plan,
+      monthly: estimatePlanCost(plan, seatCount),
+      tier: getTierForLabel(plan.label),
+    }))
+    .filter((item) => item.monthly !== null)
+    .sort((a, b) => (a.monthly ?? 0) - (b.monthly ?? 0));
+
+  return ranked[0] ?? null;
+};
+
 const getBenchmarkRange = (teamSize: number | null) => {
   if (!teamSize || teamSize <= 0) {
     return null;
@@ -368,7 +524,19 @@ const getBenchmarkRange = (teamSize: number | null) => {
 };
 
 const buildApiSpendGuidance = (toolName: string) => {
-  return `Usage-based pricing for ${toolName} is hard to optimize without monthly token volumes. Add input/output tokens so we can compare cost per 1M tokens and flag cheaper providers.`;
+  return `Usage-based pricing for ${toolName} is hard to optimize without monthly token volumes. Capture input/output tokens and peak concurrency so we can compare blended $/1M tokens and check enterprise rate tiers.`;
+};
+
+const buildApiSpendReason = (args: {
+  toolName: string;
+  monthlySpend: number | null;
+}) => {
+  const { toolName, monthlySpend } = args;
+  if (monthlySpend !== null && monthlySpend >= 1000) {
+    return `Spend is material for ${toolName}. Lock in token volume ranges to compare provider rates and evaluate enterprise pricing.`;
+  }
+
+  return buildApiSpendGuidance(toolName);
 };
 
 const confidenceForLine = (args: {
@@ -394,8 +562,12 @@ const confidenceForLine = (args: {
 export const calculateAudit = (input: AuditInput): AuditResult => {
   const lines: AuditLine[] = [];
   const useCase = (input.useCase ?? "") as UseCase;
+  const usageIntensity = input.usageIntensity ?? "moderate";
+  const optimizationMode = input.optimizationMode ?? "balanced";
   const teamSize = parseNumber(input.teamSize) ?? null;
+  const teamMaturity = getTeamMaturity(teamSize);
   const overlaps = detectOverlaps(input.tools);
+  const toolMonthlySpend: Record<string, number | null> = {};
 
   input.tools.forEach((tool) => {
     if (!tool.plan && !tool.monthlySpend && !tool.seats) {
@@ -410,65 +582,158 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
 
     const seats = parseNumber(tool.seats) ?? 1;
     const monthlySpend = parseNumber(tool.monthlySpend);
-    const currentMonthlyUsd = estimatePlanCost(plan, seats, monthlySpend);
-    const cheaper = findCheaperPlan(tool.toolId, seats, currentMonthlyUsd);
+    const listMonthlyUsd = estimatePlanCost(plan, seats);
+    const currentMonthlyUsd = estimateReportedOrList(
+      plan,
+      seats,
+      monthlySpend
+    );
+    const currentTier = getTierForLabel(plan.label);
+    const allowFreeTier = isLowRiskFreeTier({
+      seats,
+      teamSize,
+      usageIntensity,
+      useCase,
+    });
+    const decision = downgradeDecision({
+      currentTier,
+      seats,
+      teamSize,
+      usageIntensity,
+      useCase,
+    });
+    toolMonthlySpend[tool.toolId] = currentMonthlyUsd;
 
-    if (cheaper) {
-      const reasonParts = [];
-      if (isTeamPlan(plan) && seats <= 2) {
-        reasonParts.push("Team pricing is overkill for a small seat count.");
-      }
-      if (currentMonthlyUsd !== null && cheaper.monthly !== null) {
-        reasonParts.push(
-          `List price for ${cheaper.plan.label} is ${formatUsd(
-            cheaper.monthly
-          )}/mo for ${Math.max(seats, 1)} seats.`
-        );
-      }
-
+    if (
+      teamSize !== null &&
+      seats > Math.ceil(teamSize * 1.2) &&
+      seats >= 3
+    ) {
       lines.push({
         toolId: tool.toolId,
         toolName: toolPricing.toolName,
         currentPlan: plan.label,
         currentMonthlyUsd,
-        recommendedPlan: cheaper.plan.label,
-        recommendedMonthlyUsd: cheaper.monthly,
-        savingsMonthlyUsd:
-          currentMonthlyUsd !== null && cheaper.monthly !== null
-            ? currentMonthlyUsd - cheaper.monthly
-            : null,
-        confidence: confidenceForLine({
-          hasExactPricing: cheaper.monthly !== null,
-          usesMonthlySpend: monthlySpend !== null,
-          recommendationType: "cheaper-plan",
-        }),
-        reason: reasonParts.join(" ") ||
-          `${cheaper.plan.label} is cheaper for your seat count at ${formatUsd(
-            cheaper.monthly
-          )}/mo.`,
+        recommendedPlan: plan.label,
+        recommendedMonthlyUsd: currentMonthlyUsd,
+        savingsMonthlyUsd: null,
+        confidence: "medium",
+        reason:
+          "Seat allocation materially exceeds reported team size. Review unused seats before changing plans.",
       });
       return;
     }
 
-    if (monthlySpend !== null && currentMonthlyUsd !== null) {
-      const delta = monthlySpend - currentMonthlyUsd;
-      if (delta > Math.max(10, currentMonthlyUsd * 0.1)) {
+    if (
+      isEnterprisePlan(plan) &&
+      !isApiPlan(plan) &&
+      (seats <= 10 || (teamSize !== null && teamSize <= 20)) &&
+      usageIntensity !== "heavy"
+    ) {
+      const enterpriseDowngrade = findEnterpriseDowngrade(tool.toolId, seats);
+      if (enterpriseDowngrade) {
+        lines.push({
+          toolId: tool.toolId,
+          toolName: toolPricing.toolName,
+          currentPlan: plan.label,
+          currentMonthlyUsd,
+          recommendedPlan: enterpriseDowngrade.plan.label,
+          recommendedMonthlyUsd: enterpriseDowngrade.monthly,
+          savingsMonthlyUsd: null,
+          confidence: "medium",
+          reason:
+            "Enterprise governance features are typically justified at larger organizational scale. Consider a team plan unless advanced compliance requirements apply.",
+        });
+        return;
+      }
+    }
+
+    const comparable = decision === "not-recommended"
+      ? null
+      : findComparablePlan(
+        tool.toolId,
+        seats,
+        currentMonthlyUsd,
+        currentTier,
+        usageIntensity,
+        allowFreeTier
+      );
+
+    if (comparable) {
+      const reasonParts = [];
+      if (isTeamPlan(plan) && seats <= 2) {
+        reasonParts.push(
+          "Your current plan includes admin and collaboration controls designed for larger teams."
+        );
+      }
+      if (teamMaturity === "growing" || teamMaturity === "mature") {
+        reasonParts.push(
+          "We kept collaboration and seat-management features in mind for your team stage."
+        );
+      }
+      reasonParts.push(
+        `The ${comparable.plan.label} tier keeps core ${useCase || "productivity"} workflows while lowering seat overhead.`
+      );
+      if (currentMonthlyUsd !== null && comparable.monthly !== null) {
+        reasonParts.push(
+          `List price is ${formatUsd(comparable.monthly)}/mo for ${Math.max(
+            seats,
+            1
+          )} seats.`
+        );
+      }
+
+      const savingsPct =
+        currentMonthlyUsd && comparable.monthly
+          ? (currentMonthlyUsd - comparable.monthly) / currentMonthlyUsd
+          : 0;
+      const allowComparable =
+        !(savingsPct > 0.6 && overlaps.length === 0) &&
+        !(optimizationMode === "conservative" && decision === "aggressive");
+
+      if (!allowComparable) {
+        // Fall through to neutral recommendation to avoid unrealistic savings.
+      } else {
+        lines.push({
+          toolId: tool.toolId,
+          toolName: toolPricing.toolName,
+          currentPlan: plan.label,
+          currentMonthlyUsd,
+          recommendedPlan: comparable.plan.label,
+          recommendedMonthlyUsd: comparable.monthly,
+          savingsMonthlyUsd:
+            currentMonthlyUsd !== null && comparable.monthly !== null
+              ? currentMonthlyUsd - comparable.monthly
+              : null,
+          confidence: confidenceForLine({
+            hasExactPricing: comparable.monthly !== null,
+            usesMonthlySpend: monthlySpend !== null,
+            recommendationType: "cheaper-plan",
+          }),
+          reason: reasonParts.join(" "),
+        });
+        return;
+      }
+    }
+
+    if (monthlySpend !== null && listMonthlyUsd !== null) {
+      const delta = monthlySpend - listMonthlyUsd;
+      if (delta > Math.max(10, listMonthlyUsd * 0.1)) {
         lines.push({
           toolId: tool.toolId,
           toolName: toolPricing.toolName,
           currentPlan: plan.label,
           currentMonthlyUsd,
           recommendedPlan: plan.label,
-          recommendedMonthlyUsd: currentMonthlyUsd,
+          recommendedMonthlyUsd: listMonthlyUsd,
           savingsMonthlyUsd: delta,
           confidence: confidenceForLine({
             hasExactPricing: true,
             usesMonthlySpend: true,
             recommendationType: "same-plan",
           }),
-          reason: `Your billed spend is about ${formatUsd(
-            delta
-          )}/mo above the list price for ${plan.label}.`,
+          reason:
+            "Reported spend appears materially above standard pricing for this configuration.",
         });
         return;
       }
@@ -478,31 +743,42 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
       tool.toolId,
       useCase,
       seats,
-      currentMonthlyUsd
+      currentMonthlyUsd,
+      currentTier
     );
 
     if (alternative) {
-      lines.push({
-        toolId: tool.toolId,
-        toolName: toolPricing.toolName,
-        currentPlan: plan.label,
-        currentMonthlyUsd,
-        recommendedPlan: `${alternative.toolName} ${alternative.plan.label}`,
-        recommendedMonthlyUsd: alternative.monthly,
-        savingsMonthlyUsd:
-          currentMonthlyUsd !== null && alternative.monthly !== null
-            ? currentMonthlyUsd - alternative.monthly
-            : null,
-        confidence: confidenceForLine({
-          hasExactPricing: alternative.monthly !== null,
-          usesMonthlySpend: monthlySpend !== null,
-          recommendationType: "alternative",
-        }),
-        reason: `Comparable ${useCase || "general"} capability at a lower list price (${formatUsd(
-          alternative.monthly
-        )}/mo).`,
-      });
-      return;
+      const savingsPct =
+        currentMonthlyUsd && alternative.monthly
+          ? (currentMonthlyUsd - alternative.monthly) / currentMonthlyUsd
+          : 0;
+      const allowAlternative = !(savingsPct > 0.6 && overlaps.length === 0);
+
+      if (!allowAlternative) {
+        // Fall through to neutral recommendation to avoid unrealistic savings.
+      } else {
+        lines.push({
+          toolId: tool.toolId,
+          toolName: toolPricing.toolName,
+          currentPlan: plan.label,
+          currentMonthlyUsd,
+          recommendedPlan: `${alternative.toolName} ${alternative.plan.label}`,
+          recommendedMonthlyUsd: alternative.monthly,
+          savingsMonthlyUsd:
+            currentMonthlyUsd !== null && alternative.monthly !== null
+              ? currentMonthlyUsd - alternative.monthly
+              : null,
+          confidence: confidenceForLine({
+            hasExactPricing: alternative.monthly !== null,
+            usesMonthlySpend: monthlySpend !== null,
+            recommendationType: "alternative",
+          }),
+          reason:
+            `Comparable ${useCase || "general"} capability without premium tier overhead. ` +
+            `Estimated list price ${formatUsd(alternative.monthly)}/mo.`,
+        });
+        return;
+      }
     }
 
     if (isApiPlan(plan)) {
@@ -515,8 +791,10 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
         recommendedMonthlyUsd: null,
         savingsMonthlyUsd: 0,
         confidence: "low",
-        reason:
-          buildApiSpendGuidance(toolPricing.toolName),
+        reason: buildApiSpendReason({
+          toolName: toolPricing.toolName,
+          monthlySpend: currentMonthlyUsd,
+        }),
       });
       return;
     }
@@ -534,7 +812,8 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
         usesMonthlySpend: monthlySpend !== null,
         recommendationType: "same-plan",
       }),
-      reason: "Current plan appears aligned with your team size.",
+      reason:
+        "Current plan appears aligned with your team size and required feature set.",
     });
   });
 
@@ -565,7 +844,7 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
     0
   );
   const overlapSavingsMonthlyUsd = overlaps.length > 0
-    ? Math.min(150, totalMonthlyUsd * 0.05)
+    ? estimateOverlapSavings(overlaps, toolMonthlySpend)
     : 0;
   const savingsPctOfSpend = totalMonthlyUsd > 0
     ? totalSavingsMonthlyUsd / totalMonthlyUsd
@@ -580,10 +859,33 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
       )} and ${formatUsd(benchmarkRange.high)} per developer per month.`
     : "Add team size to benchmark your AI spend per developer.";
 
-  const credexRecommended =
-    totalSavingsMonthlyUsd >= 500 ||
-    overlapSavingsMonthlyUsd >= 100 ||
-    (totalMonthlyUsd >= 1000 && savingsPctOfSpend >= 0.2);
+  const hasUsageApi = input.tools.some((tool) => {
+    const plan = tool.plan ? resolvePlan(tool.toolId, tool.plan) : null;
+    return plan ? plan.pricingModel === "usage" : false;
+  });
+  const totalApiSpend = input.tools.reduce((sum, tool) => {
+    const plan = tool.plan ? resolvePlan(tool.toolId, tool.plan) : null;
+    if (!plan || plan.pricingModel !== "usage") return sum;
+    const monthlySpend = parseNumber(tool.monthlySpend) ?? 0;
+    return sum + monthlySpend;
+  }, 0);
+  const premiumCount = lines.filter((line) =>
+    ["Team", "Business", "Teams", "Enterprise"].some((label) =>
+      line.currentPlan.includes(label)
+    )
+  ).length;
+
+  let credexScore = 0;
+  if (totalSavingsMonthlyUsd >= 1000) credexScore += 3;
+  else if (totalSavingsMonthlyUsd >= 500) credexScore += 2;
+  if (overlapSavingsMonthlyUsd >= 200) credexScore += 2;
+  if (totalMonthlyUsd >= 2000) credexScore += 2;
+  if (teamSize !== null && teamSize >= 50) credexScore += 2;
+  if (hasUsageApi) credexScore += 2;
+  if (totalApiSpend >= 1000) credexScore += 2;
+  if (premiumCount >= 2) credexScore += 1;
+
+  const credexRecommended = credexScore >= 5;
   const credexReason = credexRecommended
     ? "Savings are material enough to justify a Credex credit quote and procurement review."
     : "Savings are modest. Keep monitoring, and we will notify you when pricing changes unlock more value.";
