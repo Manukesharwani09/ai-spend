@@ -201,7 +201,7 @@ export default async function ReportPage(props: PageProps) {
           ))}
         </section>
 
-        <AiSummary audit={audit} input={payload} />
+        <AiSummary audit={audit} input={payload} initialSummary={payload.aiSummary} />
       </main>
     </div>
   );

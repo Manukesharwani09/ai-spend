@@ -7,6 +7,8 @@ import { buildFallbackSummary } from "../../lib/summary";
 type AiSummaryProps = {
   input: AuditInput;
   audit: AuditResult;
+  initialSummary?: string;
+  onSummaryReady?: (summary: string) => void;
 };
 
 type SummaryState = {
@@ -14,17 +16,22 @@ type SummaryState = {
   text: string;
 };
 
-export default function AiSummary({ input, audit }: AiSummaryProps) {
+export default function AiSummary({ input, audit, initialSummary, onSummaryReady }: AiSummaryProps) {
   const fallback = useMemo(
     () => buildFallbackSummary({ audit, input }),
     [audit, input]
   );
   const [state, setState] = useState<SummaryState>({
-    status: "idle",
-    text: "Generating summary...",
+    status: initialSummary ? "ready" : "idle",
+    text: initialSummary || "Generating summary...",
   });
 
   useEffect(() => {
+    if (initialSummary) {
+      if (onSummaryReady) onSummaryReady(initialSummary);
+      return;
+    }
+
     let cancelled = false;
     const fetchSummary = async () => {
       setState({ status: "loading", text: "Generating summary..." });
@@ -45,10 +52,12 @@ export default function AiSummary({ input, audit }: AiSummaryProps) {
             status: data.source !== "fallback" ? "ready" : "fallback",
             text: data.summary,
           });
+          if (onSummaryReady) onSummaryReady(data.summary);
         }
       } catch {
         if (!cancelled) {
           setState({ status: "fallback", text: fallback });
+          if (onSummaryReady) onSummaryReady(fallback);
         }
       }
     };
@@ -57,7 +66,7 @@ export default function AiSummary({ input, audit }: AiSummaryProps) {
     return () => {
       cancelled = true;
     };
-  }, [fallback, input]);
+  }, [fallback, input, initialSummary, onSummaryReady]);
 
   return (
     <div className="rounded-2xl border border-black/5 bg-white p-4">

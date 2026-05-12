@@ -3,7 +3,7 @@ import type { AuditInput } from "./audit";
 type ShareableAuditInput = Pick<
   AuditInput,
   "teamSize" | "useCase" | "usageIntensity" | "optimizationMode" | "tools"
->;
+> & { aiSummary?: string };
 
 const toBase64Url = (value: string) => {
   if (typeof window === "undefined") {

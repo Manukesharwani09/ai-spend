@@ -92,6 +92,8 @@ export default function Home() {
   const [auditResult, setAuditResult] = useState<ReturnType<
     typeof calculateAudit
   > | null>(null);
+  const [submittedInput, setSubmittedInput] = useState<any>(null);
+  const [aiSummaryText, setAiSummaryText] = useState<string | null>(null);
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [shareMessage, setShareMessage] = useState<string | null>(null);
   const [shareToastVisible, setShareToastVisible] = useState(false);
@@ -198,11 +200,13 @@ export default function Home() {
     if (!hasInputs) {
       setHasSubmitted(true);
       setAuditResult(null);
+      setSubmittedInput(null);
+      setAiSummaryText(null);
       setShareMessage(null);
       return;
     }
 
-    const result = calculateAudit({
+    const inputPayload = {
       teamSize: formState.teamSize,
       useCase: formState.useCase,
       usageIntensity: formState.usageIntensity,
@@ -212,9 +216,13 @@ export default function Home() {
         plan: formState.tools[tool.id]?.plan ?? "",
         monthlySpend: formState.tools[tool.id]?.monthlySpend ?? "",
         seats: formState.tools[tool.id]?.seats ?? "",
-      })),
-    });
+      })).filter((tool) => tool.plan || tool.monthlySpend || tool.seats),
+    };
 
+    const result = calculateAudit(inputPayload);
+
+    setSubmittedInput(inputPayload);
+    setAiSummaryText(null); // reset AI summary on new run
     setAuditResult(result);
     setHasSubmitted(true);
     setShareMessage(null);
@@ -250,6 +258,7 @@ export default function Home() {
         monthlySpend: formState.tools[tool.id]?.monthlySpend ?? "",
         seats: formState.tools[tool.id]?.seats ?? "",
       })).filter((tool) => tool.plan || tool.monthlySpend || tool.seats),
+      ...(aiSummaryText ? { aiSummary: aiSummaryText } : {}),
     };
 
     const id = encodeSharePayload(payload);
@@ -285,6 +294,7 @@ export default function Home() {
         monthlySpend: formState.tools[tool.id]?.monthlySpend ?? "",
         seats: formState.tools[tool.id]?.seats ?? "",
       })).filter((tool) => tool.plan || tool.monthlySpend || tool.seats),
+      ...(aiSummaryText ? { aiSummary: aiSummaryText } : {}),
     };
 
     const id = encodeSharePayload(payload);
@@ -554,14 +564,16 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={shareReport}
-                    className="rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[color:var(--foreground)]"
+                    disabled={!aiSummaryText}
+                    className="rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[color:var(--foreground)] disabled:opacity-50"
                   >
                     Share audit
                   </button>
                   <button
                     type="button"
                     onClick={exportPdf}
-                    className="rounded-full border border-black/10 bg-white/70 px-4 py-2 text-sm font-semibold text-[color:var(--muted)]"
+                    disabled={!aiSummaryText}
+                    className="rounded-full border border-black/10 bg-white/70 px-4 py-2 text-sm font-semibold text-[color:var(--muted)] disabled:opacity-50"
                   >
                     Export PDF
                   </button>
@@ -633,18 +645,8 @@ export default function Home() {
                 </div>
                 <AiSummary
                   audit={auditResult}
-                  input={{
-                    teamSize: formState.teamSize,
-                    useCase: formState.useCase,
-                    usageIntensity: formState.usageIntensity,
-                    optimizationMode: formState.optimizationMode,
-                    tools: TOOLS.map((tool) => ({
-                      toolId: tool.id,
-                      plan: formState.tools[tool.id]?.plan ?? "",
-                      monthlySpend: formState.tools[tool.id]?.monthlySpend ?? "",
-                      seats: formState.tools[tool.id]?.seats ?? "",
-                    })).filter((tool) => tool.plan || tool.monthlySpend || tool.seats),
-                  }}
+                  input={submittedInput}
+                  onSummaryReady={setAiSummaryText}
                 />
               </div>
 

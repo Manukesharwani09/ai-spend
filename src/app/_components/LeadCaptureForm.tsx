@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { AuditResult } from "../../lib/audit";
 
 type LeadCaptureFormProps = {
@@ -18,6 +18,12 @@ export default function LeadCaptureForm({ auditResult }: LeadCaptureFormProps) {
   
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
+
+  // Reset form status if the audit changes
+  useEffect(() => {
+    setStatus("idle");
+    setErrorMessage("");
+  }, [auditResult]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
