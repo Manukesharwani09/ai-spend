@@ -993,7 +993,7 @@ export const calculateAudit = (input: AuditInput): AuditResult => {
     });
   }
 
-  const totalMonthlyUsd = Object.values(toolMonthlySpend).reduce(
+  const totalMonthlyUsd = Object.values(toolMonthlySpend).reduce<number>(
     (sum, value) => sum + (value ?? 0),
     0
   );
