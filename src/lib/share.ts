@@ -42,4 +42,12 @@ export const decodeSharePayload = (encoded: string) => {
   return JSON.parse(json) as ShareableAuditInput;
 };
 
+export type PublicReportSnapshot = {
+  id: string;
+  payload: ShareableAuditInput;
+  audit: import("./audit").AuditResult;
+  aiSummary: string | null;
+  createdAt: string;
+};
+
 export type { ShareableAuditInput };

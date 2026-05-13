@@ -258,19 +258,47 @@ export default function Home() {
         monthlySpend: formState.tools[tool.id]?.monthlySpend ?? "",
         seats: formState.tools[tool.id]?.seats ?? "",
       })).filter((tool) => tool.plan || tool.monthlySpend || tool.seats),
-      ...(aiSummaryText ? { aiSummary: aiSummaryText } : {}),
     };
 
-    const id = encodeSharePayload(payload);
-    const url = `${window.location.origin}/report/${id}`;
+    setShareMessage("Saving report snapshot...");
+    setShareToastVisible(true);
 
     try {
+      const response = await fetch("/api/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          payload,
+          audit: auditResult,
+          aiSummary: aiSummaryText,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to save report.");
+      }
+
+      const data = await response.json();
+      const url = `${window.location.origin}/report/${data.id}`;
+
       await navigator.clipboard.writeText(url);
-      setShareMessage("Audit link copied");
-      setShareToastVisible(true);
+      setShareMessage("Audit link copied!");
     } catch {
-      setShareMessage(url);
-      setShareToastVisible(true);
+      // Fallback to legacy encoded payload if the DB isn't configured
+      const legacyPayload = {
+        ...payload,
+        ...(aiSummaryText ? { aiSummary: aiSummaryText } : {}),
+      };
+      const id = encodeSharePayload(legacyPayload);
+      const url = `${window.location.origin}/report/${id}`;
+      
+      try {
+        await navigator.clipboard.writeText(url);
+        setShareMessage("Audit link copied (offline mode)");
+      } catch {
+        setShareMessage("Copy failed. Check console.");
+        console.log("Share URL:", url);
+      }
     }
 
     window.setTimeout(() => {

@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
 import { calculateAudit } from "../../../lib/audit";
-import { decodeSharePayload } from "../../../lib/share";
+import { decodeSharePayload, PublicReportSnapshot } from "../../../lib/share";
 import ReportActions from "./ReportActions";
 import AiSummary from "../../_components/AiSummary";
 
@@ -25,8 +26,29 @@ export async function generateMetadata(
   const { id } = await props.params;
 
   try {
-    const payload = decodeSharePayload(id);
-    const audit = calculateAudit(payload);
+    let audit;
+    
+    if (id.startsWith("rpt_")) {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (!supabaseUrl || !supabaseKey) throw new Error("Missing DB config");
+
+      const supabase = createClient(supabaseUrl, supabaseKey);
+      const { data, error } = await supabase
+        .from("public_reports")
+        .select("public_report_json")
+        .eq("report_id", id)
+        .single();
+        
+      if (error || !data) throw new Error("Report not found");
+      const snapshot = data.public_report_json as PublicReportSnapshot;
+      audit = snapshot.audit;
+    } else {
+      // Legacy Base64 parsing
+      const payload = decodeSharePayload(id);
+      audit = calculateAudit(payload);
+    }
+
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
 
     return {
@@ -79,9 +101,33 @@ export default async function ReportPage(props: PageProps) {
 
   let audit;
   let payload;
+  let initialSummary;
+
   try {
-    payload = decodeSharePayload(id);
-    audit = calculateAudit(payload);
+    if (id.startsWith("rpt_")) {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (!supabaseUrl || !supabaseKey) throw new Error("Missing DB config");
+
+      const supabase = createClient(supabaseUrl, supabaseKey);
+      const { data, error } = await supabase
+        .from("public_reports")
+        .select("public_report_json")
+        .eq("report_id", id)
+        .single();
+        
+      if (error || !data) throw new Error("Report not found");
+      const snapshot = data.public_report_json as PublicReportSnapshot;
+      
+      audit = snapshot.audit;
+      payload = snapshot.payload;
+      initialSummary = snapshot.aiSummary || undefined;
+    } else {
+      // Legacy Base64 decoding
+      payload = decodeSharePayload(id);
+      audit = calculateAudit(payload);
+      initialSummary = payload.aiSummary;
+    }
   } catch {
     notFound();
   }
@@ -201,7 +247,7 @@ export default async function ReportPage(props: PageProps) {
           ))}
         </section>
 
-        <AiSummary audit={audit} input={payload} initialSummary={payload.aiSummary} />
+        <AiSummary audit={audit} input={payload} initialSummary={initialSummary} />
       </main>
     </div>
   );

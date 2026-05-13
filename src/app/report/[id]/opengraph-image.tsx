@@ -22,8 +22,32 @@ export default async function Image({
   let isHighSavings = false;
 
   try {
-    const payload = decodeSharePayload(id);
-    const audit = calculateAudit(payload);
+    let audit;
+    if (id.startsWith("rpt_")) {
+      const { createClient } = await import("@supabase/supabase-js");
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (supabaseUrl && supabaseKey) {
+        const supabase = createClient(supabaseUrl, supabaseKey);
+        const { data } = await supabase
+          .from("public_reports")
+          .select("public_report_json")
+          .eq("report_id", id)
+          .single();
+          
+        if (data) {
+          const snapshot = data.public_report_json as import("../../../lib/share").PublicReportSnapshot;
+          audit = snapshot.audit;
+        }
+      }
+    } 
+    
+    if (!audit) {
+      // Fallback or legacy decoding
+      const payload = decodeSharePayload(id);
+      audit = calculateAudit(payload);
+    }
+
     savings = formatUsd(audit.summary.totalSavingsMonthlyUsd);
     spend = formatUsd(audit.summary.totalMonthlyUsd);
     isHighSavings = audit.summary.credexRecommended;
