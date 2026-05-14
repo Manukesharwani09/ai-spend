@@ -35,4 +35,19 @@ They view Copilot Pro not just as a generic coding assistant, but as a crucial t
 **What it changed about the design:**
 This highlighted that "Use Case" isn't the only factor; team composition matters. I ensured the audit engine accounts for partial team rollouts (e.g., 3 seats for a 4-person team), so it doesn't falsely flag missing seats as an error or unused seats as waste if they are intentionally restricting licenses to full-time members.
 
+## Interview 3: Engineering Team Using Multiple Premium AI Tools  
+**Role:** Senior Mobile Engineer  
+**Company Stage:** Mid-sized Product Company (~15 engineers)
+
+**Direct Quotes:**
+- *"It's mostly the max plans .. whatever they have to offer."*
+- *"It's mostly for the same job, to generate code. but yes, we use certain tools for certain tasks."*
+- *"It's claude code. Obviously for coding. And chatgpt for generic queries."*
+- *"Since all the tools are paid for by the company, we just get whatever has the best ROI."*
+
+**The most surprising thing they said:**
+Even though the team was simultaneously paying for multiple overlapping premium AI products (Claude, ChatGPT, Copilot, Cursor, etc.), they did not consider overlap itself to be wasteful. Their primary decision criteria was developer productivity and workflow ROI, not minimizing the number of subscriptions. Different tools were kept because engineers informally specialized them for different workflows, even if the core functionality overlapped heavily.
+
+**What it changed about the design:**
+This conversation changed how I approached overlap detection and downgrade recommendations. Initially, the audit engine treated multiple premium coding assistants as strong evidence of unnecessary spend. After this interview, I made overlap warnings more contextual and conservative so the system does not aggressively recommend consolidation when teams are intentionally optimizing for productivity, specialization, or workflow preference. It also reinforced the importance of usage intensity and workflow-fit reasoning over pure cost minimization.
 ---
